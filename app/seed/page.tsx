@@ -22,9 +22,14 @@ export default function SeedPage() {
     const p = await fetch('/api/seed', { method: 'POST', headers: h, body: JSON.stringify({ step: 'periods' }) });
     if (!p.ok) { setMsg('Could not seed periods: ' + ((await p.json()).error || p.status)); setRunning(false); return; }
     for (const u of artists) {
-      setMsg(`Fetching ${u.title}`);
-      const r = await fetch('/api/seed', { method: 'POST', headers: h, body: JSON.stringify({ artist: u.title, period: u.period }) });
-      const j = await r.json().catch(() => ({ status: 'error', note: String(r.status) }));
+      let j: any = null;
+      // Wikipedia occasionally throttles or times out; give each artist a second attempt before recording an error.
+      for (let attempt = 0; attempt < 2 && (!j || j.status === 'error'); attempt++) {
+        setMsg(attempt ? `Retrying ${u.title}` : `Fetching ${u.title}`);
+        if (attempt) await new Promise(res => setTimeout(res, 3000));
+        const r = await fetch('/api/seed', { method: 'POST', headers: h, body: JSON.stringify({ artist: u.title, period: u.period }) });
+        j = await r.json().catch(() => ({ status: 'error', note: String(r.status) }));
+      }
       setLines(l => [...l, { title: u.title, status: j.status || 'error', note: j.note, paintings: j.paintings }]);
     }
     setMsg('Done. Open the timeline.');
