@@ -1,0 +1,46 @@
+:root {
+  --night: #14110f;
+  --night-2: #1f1a16;
+  --ivory: #efe9dc;
+  --ivory-2: #e3dbcb;
+  --brass: #a8894c;
+  --umber: #3b2e25;
+  --oxblood: #6e2a28;
+  --fog: #9a9082;
+  --serif: "Iowan Old Style", "Palatino Linotype", "Book Antiqua", Palatino, Georgia, "Times New Roman", serif;
+  --sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; height: 100%; background: var(--night); color: var(--ivory); font-family: var(--sans); -webkit-font-smoothing: antialiased; }
+a { color: inherit; }
+button { font: inherit; cursor: pointer; }
+:focus-visible { outline: 2px solid var(--brass); outline-offset: 2px; }
+@media (prefers-reduced-motion: reduce) { * { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; } }
+
+.serif { font-family: var(--serif); }
+.placard {
+  background: var(--ivory);
+  color: var(--umber);
+  font-family: var(--serif);
+  border-radius: 2px;
+  box-shadow: 0 30px 60px rgba(0,0,0,.55), inset 0 0 0 1px rgba(59,46,37,.12);
+}
+.placard h2 { font-weight: 500; letter-spacing: .01em; margin: 0; }
+.placard p { line-height: 1.6; }
+.brassline { height: 1px; background: linear-gradient(90deg, transparent, var(--brass), transparent); }
+.btn {
+  border: 1px solid var(--brass); background: transparent; color: var(--umber);
+  padding: .65rem 1.1rem; font-family: var(--serif); font-size: 1rem; letter-spacing: .02em; border-radius: 2px;
+  transition: background .18s ease, color .18s ease;
+}
+.btn:hover { background: var(--brass); color: var(--ivory); }
+.btn-dark { border-color: var(--brass); color: var(--ivory); }
+.btn-dark:hover { background: var(--brass); color: var(--night); }
+
+.timeline-svg text { user-select: none; }
+.timeline-svg .period-band { cursor: pointer; }
+.timeline-svg .artist-node { cursor: pointer; }
+
+.crosshair { position: fixed; left: 50%; top: 50%; width: 10px; height: 10px; margin: -5px 0 0 -5px; border: 1px solid rgba(239,233,220,.8); border-radius: 50%; pointer-events: none; }
+.hud { position: fixed; left: 1.25rem; bottom: 1.25rem; font-family: var(--serif); color: var(--ivory); opacity: .85; font-size: .95rem; pointer-events: none; }
+.veil { position: fixed; inset: 0; background: var(--night); display: grid; place-items: center; z-index: 30; }
