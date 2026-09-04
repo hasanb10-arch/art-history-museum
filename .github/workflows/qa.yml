@@ -17,6 +17,12 @@ jobs:
         with: { node-version: 20 }
       - run: npm ci
       - run: npx playwright install --with-deps chromium
+      - name: Check the site answers from this runner
+        run: |
+          curl -sS -D - -o /tmp/periods.json "$BASE_URL/api/periods" | head -n 20
+          head -c 600 /tmp/periods.json; echo
+        env:
+          BASE_URL: ${{ inputs.base_url || secrets.BASE_URL || 'https://art-history-museum-blue-ocean4.vercel.app' }}
       - run: npx playwright test
         env:
           BASE_URL: ${{ inputs.base_url || secrets.BASE_URL || 'https://art-history-museum-blue-ocean4.vercel.app' }}
