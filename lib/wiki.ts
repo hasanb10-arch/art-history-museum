@@ -1,16 +1,59 @@
 // Everything here talks to Wikipedia, Wikidata and Wikimedia Commons.
 // No text is invented: extracts are copied from the articles as-is.
 
-const UA = 'ArtHistoryMuseum/1.0 (educational project; contact via repository)';
+// Wikimedia asks for a descriptive User-Agent with a way to reach the operator.
+const UA = 'ArtHistoryMuseum/1.0 (https://github.com/hasanb10-arch/art-history-museum; educational project)';
 
-async function getJSON(url: string, init?: RequestInit): Promise<any> {
-  const res = await fetch(url, {
-    ...init,
-    headers: { 'User-Agent': UA, Accept: 'application/json', ...(init?.headers || {}) },
-    cache: 'no-store',
-  });
-  if (!res.ok) throw new Error(`${res.status} ${url}`);
-  return res.json();
+export class HttpError extends Error {
+  status: number;
+  constructor(status: number, url: string) {
+    super(`${status} ${url.split('?')[0]}`);
+    this.status = status;
+  }
+}
+
+const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
+
+/** fetch JSON with a per-request timeout and a couple of retries on throttling / transient errors. */
+async function getJSON(url: string, init?: RequestInit, timeoutMs = 15_000): Promise<any> {
+  let lastErr: any;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const res = await fetch(url, {
+        ...init,
+        headers: { 'User-Agent': UA, 'Api-User-Agent': UA, Accept: 'application/json', ...(init?.headers || {}) },
+        cache: 'no-store',
+        signal: AbortSignal.timeout(timeoutMs),
+      });
+      if (res.ok) return res.json();
+      if (res.status === 404) throw new HttpError(404, url);
+      lastErr = new HttpError(res.status, url);
+      // 429 / 5xx: back off and try again; anything else is final
+      if (res.status !== 429 && res.status < 500) throw lastErr;
+      const retryAfter = Number(res.headers.get('retry-after')) || 0;
+      await sleep(Math.min(8000, retryAfter * 1000 || 800 * (attempt + 1)));
+    } catch (e: any) {
+      if (e instanceof HttpError && (e.status === 404 || (e.status !== 429 && e.status < 500))) throw e;
+      lastErr = e;
+      await sleep(500 * (attempt + 1));
+    }
+  }
+  throw lastErr;
+}
+
+/** Run an async mapper over items with at most `limit` in flight at once (order preserved). */
+export async function mapLimit<T, R>(items: T[], limit: number, fn: (t: T) => Promise<R>): Promise<R[]> {
+  const out: R[] = new Array(items.length);
+  let next = 0;
+  await Promise.all(
+    Array.from({ length: Math.min(limit, items.length) }, async () => {
+      while (next < items.length) {
+        const i = next++;
+        out[i] = await fn(items[i]);
+      }
+    }),
+  );
+  return out;
 }
 
 export type Summary = {
@@ -22,7 +65,28 @@ export type Summary = {
   original?: string;
 };
 
-/** Lead-section summary of an English Wikipedia article. */
+/** Same data via the classic Action API (used when the REST summary endpoint is unavailable or throttled). */
+async function actionSummary(title: string): Promise<Summary | null> {
+  const d = await getJSON(
+    `https://en.wikipedia.org/w/api.php?action=query&prop=extracts|pageprops|pageimages&exintro=1&explaintext=1&ppprop=wikibase_item|disambiguation&piprop=thumbnail|original&pithumbsize=640&redirects=1&format=json&formatversion=2&origin=*&titles=${encodeURIComponent(title)}`,
+  );
+  const page = d.query?.pages?.[0];
+  if (!page || page.missing || page.pageprops?.disambiguation !== undefined || !page.extract) return null;
+  return {
+    title: page.title,
+    extract: String(page.extract).trim(),
+    url: `https://en.wikipedia.org/wiki/${encodeURIComponent(String(page.title).replace(/ /g, '_'))}`,
+    qid: page.pageprops?.wikibase_item,
+    thumbnail: page.thumbnail?.source,
+    original: page.original?.source,
+  };
+}
+
+/**
+ * Lead-section summary of an English Wikipedia article.
+ * Returns null only when the article genuinely does not exist (or is a disambiguation page);
+ * network / throttling problems are thrown so the caller can report them instead of "skipping".
+ */
 export async function wikiSummary(title: string): Promise<Summary | null> {
   try {
     const d = await getJSON(`https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(title)}?redirect=true`);
@@ -35,8 +99,10 @@ export async function wikiSummary(title: string): Promise<Summary | null> {
       thumbnail: d.thumbnail?.source,
       original: d.originalimage?.source,
     };
-  } catch {
-    return null;
+  } catch (e: any) {
+    if (e instanceof HttpError && e.status === 404) return null;
+    // REST endpoint unavailable (403/429/5xx/timeout): fall back to the Action API before giving up.
+    return actionSummary(title);
   }
 }
 
@@ -115,17 +181,19 @@ export type WdPainting = {
 
 /** Paintings (P31 painting) by the artist that have a Commons image, preferring ones with an English article. */
 export async function wikidataPaintings(qid: string, limit = 16): Promise<WdPainting[]> {
+  // Direct "instance of: painting" only. The transitive P31/P279* form is far too slow for prolific
+  // artists (Leonardo, Michelangelo, Rembrandt) and made the query service time out.
   const sparql = `
-    SELECT ?item ?itemLabel ?itemDescription ?image (MIN(?date) AS ?inception) ?article WHERE {
-      ?item wdt:P170 wd:${qid}; wdt:P31/wdt:P279* wd:Q3305213; wdt:P18 ?image.
+    SELECT ?item ?itemLabel ?itemDescription (SAMPLE(?img) AS ?image) (MIN(?date) AS ?inception) (SAMPLE(?art) AS ?article) WHERE {
+      ?item wdt:P170 wd:${qid}; wdt:P31 wd:Q3305213; wdt:P18 ?img.
       OPTIONAL { ?item wdt:P571 ?date. }
-      OPTIONAL { ?article schema:about ?item; schema:isPartOf <https://en.wikipedia.org/>. }
+      OPTIONAL { ?art schema:about ?item; schema:isPartOf <https://en.wikipedia.org/>. }
       SERVICE wikibase:label { bd:serviceParam wikibase:language "en". }
     }
-    GROUP BY ?item ?itemLabel ?itemDescription ?image ?article
+    GROUP BY ?item ?itemLabel ?itemDescription
     ORDER BY DESC(BOUND(?article)) ?inception
-    LIMIT ${limit * 3}`;
-  const d = await getJSON(`https://query.wikidata.org/sparql?format=json&query=${encodeURIComponent(sparql)}`);
+    LIMIT ${limit * 2}`;
+  const d = await getJSON(`https://query.wikidata.org/sparql?format=json&query=${encodeURIComponent(sparql)}`, undefined, 25_000);
   const rows: any[] = d.results?.bindings || [];
   const seen = new Set<string>();
   const out: WdPainting[] = [];

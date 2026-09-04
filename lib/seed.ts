@@ -1,6 +1,6 @@
 import { CATALOG } from './catalog';
 import { ensureSchema, sql } from './db';
-import { commonsImage, extractFacts, wikiPlainText, wikiSummary, wikidataArtist, wikidataPaintings } from './wiki';
+import { commonsImage, extractFacts, mapLimit, wikiPlainText, wikiSummary, wikidataArtist, wikidataPaintings } from './wiki';
 
 export type SeedReport = {
   artist: string;
@@ -46,15 +46,18 @@ export async function seedArtist(periodSlug: string, wikiTitle: string, maxPaint
   await q`DELETE FROM paintings WHERE artist_id = ${artistId}`;
 
   const candidates = await wikidataPaintings(summary.qid, maxPaintings);
-  let position = 0;
-  for (const c of candidates) {
+
+  // Enrich candidates a few at a time instead of one by one: each needs 1 to 3 Wikimedia requests and
+  // doing them strictly in sequence pushed prolific artists past the serverless time limit.
+  type Enriched = { c: (typeof candidates)[number]; img: NonNullable<Awaited<ReturnType<typeof commonsImage>>>; story: string | null; facts: string[]; wikiUrl: string | null };
+  const enriched = await mapLimit(candidates, 4, async (c): Promise<Enriched | null> => {
     const img = await commonsImage(c.file);
-    if (!img || img.width < 400) continue;
+    if (!img || img.width < 400) return null;
     let story: string | null = c.description || null;
     let facts: string[] = [];
     let wikiUrl: string | null = null;
     if (c.enTitle) {
-      const ps = await wikiSummary(c.enTitle);
+      const ps = await wikiSummary(c.enTitle).catch(() => null);
       if (ps) {
         story = ps.extract;
         wikiUrl = ps.url;
@@ -62,6 +65,14 @@ export async function seedArtist(periodSlug: string, wikiTitle: string, maxPaint
         facts = extractFacts(plain, ps.extract);
       }
     }
+    return { c, img, story, facts, wikiUrl };
+  });
+
+  let position = 0;
+  for (const e of enriched) {
+    if (!e) continue;
+    if (position >= maxPaintings) break;
+    const { c, img, story, facts, wikiUrl } = e;
     await q`INSERT INTO paintings (artist_id, qid, title, year, image_url, thumb_url, width, height, license, story, fun_facts, wiki_url, commons_file, position)
       VALUES (${artistId}, ${c.qid}, ${c.label}, ${c.year ?? null}, ${img.full}, ${img.thumb}, ${img.width}, ${img.height}, ${img.license || null},
         ${story}, ${JSON.stringify(facts)}, ${wikiUrl}, ${c.file}, ${position++})`;
