@@ -134,6 +134,9 @@ export default function Timeline({ periods, onArtist, focusPeriod, focusArtist }
         const sorted = [...p.artists].sort((a, b) => activeYear(a, p.start_year) - activeYear(b, p.start_year));
         return sorted.map((a, i) => {
           const ax = zx(activeYear(a, p.start_year));
+          // Only mount artists that are actually on screen: off-screen nodes are dead weight for the
+          // browser and unreachable for anyone tabbing or clicking through the timeline.
+          if (ax < -80 || ax > size.w + 80) return null;
           const stagger = (i % 2 === 0 ? -1 : 1) * 14;
           return (
             <g key={a.id} className="artist-node" transform={`translate(${ax},${y + stagger})`} opacity={fade}
