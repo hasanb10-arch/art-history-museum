@@ -50,9 +50,29 @@ export default function Gallery({ paintings, onInspect, inspecting, onReady }: P
     const camera = new THREE.PerspectiveCamera(62, el.clientWidth / el.clientHeight, 0.05, 80);
 
     // ---------- room size from painting count ----------
+    type Slot = { x: number; z: number; ry: number; nx: number; nz: number };
+    const along = (len: number, margin: number) => {
+      const count = Math.max(0, Math.floor((len - margin * 2) / SLOT));
+      const start = -((count - 1) * SLOT) / 2;
+      return Array.from({ length: count }, (_, i) => start + i * SLOT);
+    };
+    // north, east, west, then south (leaving the entrance clear)
+    const buildSlots = (W: number, D: number): Slot[] => {
+      const hx = W / 2, hz = D / 2;
+      const out: Slot[] = [];
+      for (const x of along(W, 1.5)) out.push({ x, z: -hz, ry: 0, nx: 0, nz: 1 });
+      for (const z of along(D, 1.5)) out.push({ x: hx, z, ry: -Math.PI / 2, nx: -1, nz: 0 });
+      for (const z of along(D, 1.5)) out.push({ x: -hx, z, ry: Math.PI / 2, nx: 1, nz: 0 });
+      for (const x of along(W, 1.5).filter(v => Math.abs(v) > 1.9)) out.push({ x, z: hz, ry: Math.PI, nx: 0, nz: -1 });
+      return out;
+    };
     const n = Math.max(paintings.length, 4);
     const perimeter = n * SLOT + 10;
-    const D = Math.max(9, perimeter / 4.8);
+    // Start from the perimeter estimate and grow the room until every painting has its own slot,
+    // otherwise two paintings end up hanging in the same spot and z-fight.
+    let D = Math.max(9, perimeter / 4.8);
+    let slots = buildSlots(D * 1.4, D);
+    while (slots.length < n && D < 60) { D += 0.5; slots = buildSlots(D * 1.4, D); }
     const W = D * 1.4;
     const H = 4.2;
     const hx = W / 2, hz = D / 2;
@@ -114,19 +134,6 @@ export default function Gallery({ paintings, onInspect, inspecting, onReady }: P
     const fill = new THREE.PointLight(0xffe9c9, 6, 30, 2); fill.position.set(0, H - 0.4, 0); scene.add(fill);
 
     // ---------- hang paintings ----------
-    type Slot = { x: number; z: number; ry: number; nx: number; nz: number };
-    const slots: Slot[] = [];
-    const along = (len: number, margin: number) => {
-      const count = Math.max(0, Math.floor((len - margin * 2) / SLOT));
-      const start = -((count - 1) * SLOT) / 2;
-      return Array.from({ length: count }, (_, i) => start + i * SLOT);
-    };
-    // north, east, west, then south (leaving the entrance clear)
-    for (const x of along(W, 1.5)) slots.push({ x, z: -hz, ry: 0, nx: 0, nz: 1 });
-    for (const z of along(D, 1.5)) slots.push({ x: hx, z, ry: -Math.PI / 2, nx: -1, nz: 0 });
-    for (const z of along(D, 1.5)) slots.push({ x: -hx, z, ry: Math.PI / 2, nx: 1, nz: 0 });
-    for (const x of along(W, 1.5).filter(v => Math.abs(v) > 1.9)) slots.push({ x, z: hz, ry: Math.PI, nx: 0, nz: -1 });
-
     const loader = new THREE.TextureLoader();
     loader.setCrossOrigin('anonymous');
     const maxAniso = renderer.capabilities.getMaxAnisotropy();
